@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-// import './index.css'; // --- 已移除：在当前预览环境中不需要此行，Tailwind 会自动生效 ---
+// import './index.css'; // [已修复] 暂时注释此行以解决预览环境报错。正式部署时请确保存在 index.css 并取消注释。
 import { 
   Cloud, 
   HardDrive, 
@@ -15,7 +15,6 @@ import {
   List as ListIcon, 
   Trash2,
   X,
-  File,
   ChevronRight,
   AlertTriangle,
   FolderPlus,
@@ -33,22 +32,76 @@ import {
   Bot,
   Send,
   Loader2,
-  Eye,
-  Crown,       // 新增：皇冠图标
-  CreditCard,  // 新增：支付图标
-  Zap,         // 新增：闪电图标（加速）
-  CheckCircle2, // 新增：成功图标
-  QrCode       // 新增：二维码图标
+  Crown,
+  Zap,
+  CheckCircle2,
+  QrCode
 } from 'lucide-react';
+
+// --- 1. 类型定义 (修复 TS 报错的核心) ---
+// 定义文件对象的结构
+interface FileItem {
+  id: string;
+  name: string;
+  type: 'folder' | 'file';
+  size: number;
+  date: string;
+  parentId: string;
+  isDeleted: boolean;
+  mimeType?: string;
+  url?: string;
+}
+
+// 定义用户信息的结构
+interface UserProfile {
+  name: string;
+  avatar: string;
+}
+
+// 定义会员状态的结构
+interface VipStatus {
+  isVip: boolean;
+  level: string;
+  name: string;
+  storageLimit: number;
+}
+
+// 定义会员套餐的结构
+interface VipPlan {
+  id: string;
+  name: string;
+  price: string;
+  period: string;
+  storage: string;
+  features: string[];
+  color: string;
+  tag: string | null;
+}
+
+// 定义上传进度的结构
+interface UploadProgress {
+  fileName: string;
+  percent: number;
+}
+
+// 定义提示消息的结构
+interface ToastState {
+  msg: string;
+  type: 'success' | 'info' | 'error';
+}
+
+// 定义聊天消息的结构
+interface ChatMessage {
+  role: 'ai' | 'user';
+  text: string;
+}
 
 // --- 全局配置 ---
 const APP_NAME = "元哥云盘";
-
-// --- Gemini API 配置 ---
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
 
 // --- 会员套餐配置 ---
-const VIP_PLANS = [
+const VIP_PLANS: VipPlan[] = [
   { 
     id: 'monthly', 
     name: '普通月卡', 
@@ -82,7 +135,7 @@ const VIP_PLANS = [
 ];
 
 // --- 辅助函数 ---
-const formatBytes = (bytes, decimals = 2) => {
+const formatBytes = (bytes: number, decimals = 2) => {
   if (bytes === 0) return '0 B';
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
@@ -92,7 +145,7 @@ const formatBytes = (bytes, decimals = 2) => {
 };
 
 const formatDate = (dateObj = new Date()) => {
-  const pad = (n) => n.toString().padStart(2, '0');
+  const pad = (n: number) => n.toString().padStart(2, '0');
   const year = dateObj.getFullYear();
   const month = pad(dateObj.getMonth() + 1);
   const day = pad(dateObj.getDate());
@@ -102,7 +155,7 @@ const formatDate = (dateObj = new Date()) => {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 };
 
-const getFileIcon = (type, mimeType) => {
+const getFileIcon = (type: string, mimeType?: string) => {
   if (type === 'folder') return <Folder className="w-10 h-10 text-yellow-400 fill-current" />;
   if (mimeType?.startsWith('image/')) return <ImageIcon className="w-10 h-10 text-purple-500" />;
   if (mimeType?.startsWith('video/')) return <Video className="w-10 h-10 text-red-500" />;
@@ -112,10 +165,11 @@ const getFileIcon = (type, mimeType) => {
 };
 
 // --- API 调用函数 (Gemini) ---
-const callGeminiAPI = async (prompt, imageBase64 = null) => {
+const callGeminiAPI = async (prompt: string, imageBase64: string | null = null) => {
   const apiKey = ""; 
   
-  const contents = [{
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contents: any[] = [{
     parts: [
       { text: prompt }
     ]
@@ -146,14 +200,15 @@ const callGeminiAPI = async (prompt, imageBase64 = null) => {
   }
 };
 
-const blobUrlToBase64 = async (url) => {
+const blobUrlToBase64 = async (url: string): Promise<string | null> => {
   try {
     const response = await fetch(url);
     const blob = await response.blob();
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64String = reader.result.split(',')[1];
+        const result = reader.result as string;
+        const base64String = result.split(',')[1];
         resolve(base64String);
       };
       reader.onerror = reject;
@@ -166,7 +221,7 @@ const blobUrlToBase64 = async (url) => {
 };
 
 // --- 组件：Toast 提示 ---
-const Toast = ({ message, type = 'info', onClose }) => {
+const Toast = ({ message, type = 'info', onClose }: { message: string, type?: 'info'|'success'|'error', onClose: () => void }) => {
   useEffect(() => {
     const timer = setTimeout(onClose, 3000);
     return () => clearTimeout(timer);
@@ -182,27 +237,26 @@ const Toast = ({ message, type = 'info', onClose }) => {
   );
 };
 
-// --- 组件：会员开通弹窗 (新增) ---
-const VipUpgradeModal = ({ isOpen, onClose, onUpgradeSuccess }) => {
+// --- 组件：会员开通弹窗 ---
+const VipUpgradeModal = ({ isOpen, onClose, onUpgradeSuccess }: { isOpen: boolean, onClose: () => void, onUpgradeSuccess: (plan: VipPlan) => void }) => {
   const [selectedPlanId, setSelectedPlanId] = useState('yearly');
-  const [step, setStep] = useState('select'); // 'select' | 'pay' | 'success'
+  const [step, setStep] = useState<'select' | 'pay' | 'success'>('select');
   const [isProcessing, setIsProcessing] = useState(false);
 
   if (!isOpen) return null;
 
-  const selectedPlan = VIP_PLANS.find(p => p.id === selectedPlanId);
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  const selectedPlan = VIP_PLANS.find(p => p.id === selectedPlanId)!;
 
   const handlePay = () => {
     setIsProcessing(true);
-    // 模拟支付过程
     setTimeout(() => {
       setIsProcessing(false);
       setStep('success');
-      // 2秒后自动关闭并通知父组件
       setTimeout(() => {
         onUpgradeSuccess(selectedPlan);
         onClose();
-        setStep('select'); // 重置状态
+        setStep('select');
       }, 2000);
     }, 2000);
   };
@@ -381,8 +435,8 @@ const VipUpgradeModal = ({ isOpen, onClose, onUpgradeSuccess }) => {
   );
 };
 
-// --- 组件：文件预览模态框 (保持不变) ---
-const FilePreviewModal = ({ file, onClose }) => {
+// --- 组件：文件预览模态框 ---
+const FilePreviewModal = ({ file, onClose }: { file: FileItem | null, onClose: () => void }) => {
   if (!file) return null;
 
   const isImage = file.mimeType?.startsWith('image/');
@@ -423,14 +477,14 @@ const FilePreviewModal = ({ file, onClose }) => {
   );
 };
 
-// --- 组件：AI 助手面板 (保持不变) ---
-const AIAssistantPanel = ({ isOpen, onClose, selectedFile }) => {
-  const [messages, setMessages] = useState([
+// --- 组件：AI 助手面板 ---
+const AIAssistantPanel = ({ isOpen, onClose, selectedFile }: { isOpen: boolean, onClose: () => void, selectedFile: FileItem | null }) => {
+  const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'ai', text: '你好！我是元哥云盘的 AI 助手。我可以帮你解读图片、总结文档或回答任何问题。' }
   ]);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const messagesEndRef = useRef(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -447,7 +501,7 @@ const AIAssistantPanel = ({ isOpen, onClose, selectedFile }) => {
 
   const handleSend = async () => {
     if (!input.trim()) return;
-    const userMsg = { role: 'user', text: input };
+    const userMsg: ChatMessage = { role: 'user', text: input };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsThinking(true);
@@ -459,7 +513,7 @@ const AIAssistantPanel = ({ isOpen, onClose, selectedFile }) => {
   const handleAnalyzeFile = async () => {
     if (!selectedFile) return;
     const prompt = `请详细分析并描述这个文件的内容：${selectedFile.name}。如果这是一张图片，请详细描述画面细节；如果这是一个文档，请根据文件名猜测其可能包含的核心主题。`;
-    const userMsg = { role: 'user', text: `✨ 请帮我解读文件：${selectedFile.name}` };
+    const userMsg: ChatMessage = { role: 'user', text: `✨ 请帮我解读文件：${selectedFile.name}` };
     setMessages(prev => [...prev, userMsg]);
     setIsThinking(true);
     let imageBase64 = null;
@@ -501,11 +555,11 @@ const AIAssistantPanel = ({ isOpen, onClose, selectedFile }) => {
   );
 };
 
-// --- 组件：复杂登录/注册/找回系统 (保持不变) ---
-const AuthSystem = ({ onLogin }) => {
-  const [mode, setMode] = useState('login-pass');
+// --- 组件：复杂登录/注册/找回系统 ---
+const AuthSystem = ({ onLogin }: { onLogin: (name: string) => void }) => {
+  const [mode, setMode] = useState<'login-pass' | 'login-sms' | 'register' | 'forgot'>('login-pass');
   const [isLoading, setIsLoading] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -534,7 +588,7 @@ const AuthSystem = ({ onLogin }) => {
     }, 1500);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setTimeout(() => {
@@ -632,8 +686,8 @@ const AuthSystem = ({ onLogin }) => {
   );
 };
 
-// --- 组件：侧边栏 (更新支持 VIP) ---
-const Sidebar = ({ activeTab, setActiveTab, storageUsed, storageLimit, userVipStatus, onOpenVip }) => {
+// --- 组件：侧边栏 ---
+const Sidebar = ({ activeTab, setActiveTab, storageUsed, storageLimit, userVipStatus, onOpenVip }: { activeTab: string, setActiveTab: (tab: string) => void, storageUsed: number, storageLimit: number, userVipStatus: VipStatus, onOpenVip: () => void }) => {
   const usagePercent = Math.min((storageUsed / storageLimit) * 100, 100);
 
   const menuItems = [
@@ -704,40 +758,40 @@ const Sidebar = ({ activeTab, setActiveTab, storageUsed, storageLimit, userVipSt
 
 // --- 主组件 ---
 export default function CloudDrive() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [viewMode, setViewMode] = useState('grid');
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [currentFolder, setCurrentFolder] = useState('root');
   const [activeTab, setActiveTab] = useState('all');
-  const [toast, setToast] = useState(null);
-  const [previewFile, setPreviewFile] = useState(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   
   // AI 相关状态
   const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
-  const [selectedFileForAI, setSelectedFileForAI] = useState(null);
+  const [selectedFileForAI, setSelectedFileForAI] = useState<FileItem | null>(null);
 
   // 会员相关状态
   const [isVipModalOpen, setIsVipModalOpen] = useState(false);
-  const [userVipStatus, setUserVipStatus] = useState({ isVip: false, level: 'free', name: '普通用户', storageLimit: 10 * 1024 * 1024 * 1024 });
+  const [userVipStatus, setUserVipStatus] = useState<VipStatus>({ isVip: false, level: 'free', name: '普通用户', storageLimit: 10 * 1024 * 1024 * 1024 });
 
-  const [files, setFiles] = useState([
+  const [files, setFiles] = useState<FileItem[]>([
     { id: 'f1', name: '元哥的项目资料', type: 'folder', size: 0, date: '2023-10-24 09:30:00', parentId: 'root', isDeleted: false },
     { id: 'f2', name: '旅行相册', type: 'folder', size: 0, date: '2023-10-25 14:20:15', parentId: 'root', isDeleted: false },
     { id: 'd1', name: '元哥云盘使用说明.pdf', type: 'file', mimeType: 'application/pdf', size: 2500000, date: '2023-10-26 10:05:30', parentId: 'root', isDeleted: false, url: '#' },
   ]);
-  const [uploadProgress, setUploadProgress] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   
   // Modal States
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [fileToDelete, setFileToDelete] = useState(null);
-  const [fileToShare, setFileToShare] = useState(null);
+  const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
+  const [fileToShare, setFileToShare] = useState<FileItem | null>(null);
   const [shareLink, setShareLink] = useState('');
 
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Auth Handler ---
-  const handleLogin = (username) => {
+  const handleLogin = (username: string) => {
     setCurrentUser({ name: username, avatar: 'https://i.pravatar.cc/150?img=12' });
   };
 
@@ -746,16 +800,15 @@ export default function CloudDrive() {
     setActiveTab('all');
     setCurrentFolder('root');
     setIsAIAssistantOpen(false);
-    // 重置VIP状态
     setUserVipStatus({ isVip: false, level: 'free', name: '普通用户', storageLimit: 10 * 1024 * 1024 * 1024 });
   };
 
-  const showToast = (msg, type='success') => {
+  const showToast = (msg: string, type: 'success' | 'info' | 'error' = 'success') => {
       setToast({ msg, type });
   };
 
   // --- VIP Handler ---
-  const handleVipUpgrade = (plan) => {
+  const handleVipUpgrade = (plan: VipPlan) => {
     let limit = 10 * 1024 * 1024 * 1024; // 10GB default
     if (plan.id === 'monthly') limit = 2 * 1024 * 1024 * 1024 * 1024; // 2TB
     if (plan.id === 'yearly') limit = 5 * 1024 * 1024 * 1024 * 1024; // 5TB
@@ -805,8 +858,8 @@ export default function CloudDrive() {
   const storageUsed = useMemo(() => files.reduce((acc, file) => acc + (file.size || 0), 0), [files]);
 
   // --- File Actions ---
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
 
     if (storageUsed + file.size > userVipStatus.storageLimit) {
@@ -824,7 +877,7 @@ export default function CloudDrive() {
       if (progress >= 100) {
         clearInterval(interval);
         setTimeout(() => {
-          const newFile = {
+          const newFile: FileItem = {
             id: Date.now().toString(),
             name: file.name,
             type: 'file',
@@ -832,7 +885,7 @@ export default function CloudDrive() {
             size: file.size,
             date: formatDate(new Date()),
             parentId: currentFolder,
-            url: URL.createObjectURL(file), // 创建本地预览链接
+            url: URL.createObjectURL(file),
             isDeleted: false
           };
           setFiles(prev => [...prev, newFile]);
@@ -843,7 +896,7 @@ export default function CloudDrive() {
     }, 100);
   };
 
-  const handleCreateFolder = (e) => {
+  const handleCreateFolder = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFolderName.trim()) return;
     
@@ -876,7 +929,7 @@ export default function CloudDrive() {
     }
   };
 
-  const handleRestore = (id, e) => {
+  const handleRestore = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setFiles(prev => prev.map(f => 
       f.id === id ? { ...f, isDeleted: false } : f
@@ -884,17 +937,15 @@ export default function CloudDrive() {
     showToast('文件已还原');
   };
 
-  const handleItemClick = (item) => {
+  const handleItemClick = (item: FileItem) => {
     if (activeTab === 'trash') return;
     
     if (item.type === 'folder') {
       setCurrentFolder(item.id);
     } else {
-      // 打开预览而不是新窗口
       setPreviewFile(item);
     }
     
-    // 选中文件以供 AI 分析
     if (item.type === 'file') {
       setSelectedFileForAI(item);
     } else {
@@ -902,12 +953,12 @@ export default function CloudDrive() {
     }
   };
 
-  const handleDeleteClick = (file, e) => {
+  const handleDeleteClick = (file: FileItem, e: React.MouseEvent) => {
     e.stopPropagation();
     setFileToDelete(file);
   };
 
-  const handleShareClick = (file, e) => {
+  const handleShareClick = (file: FileItem, e: React.MouseEvent) => {
     e.stopPropagation();
     setFileToShare(file);
     const randomCode = Math.random().toString(36).substring(7);
@@ -924,12 +975,10 @@ export default function CloudDrive() {
     setIsAIAssistantOpen(!isAIAssistantOpen);
   };
 
-  // --- Render Login Logic ---
   if (!currentUser) {
     return <AuthSystem onLogin={handleLogin} />;
   }
 
-  // --- Main Render ---
   return (
     <div className="flex h-screen bg-white font-sans overflow-hidden">
       {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
@@ -961,7 +1010,6 @@ export default function CloudDrive() {
           </div>
           
           <div className="flex items-center space-x-4">
-            {/* VIP Status Icon in Header */}
             {userVipStatus.isVip && (
               <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-amber-400 rounded-full text-xs font-bold shadow-md animate-fade-in">
                  <Crown size={14} className="fill-current"/>
@@ -969,7 +1017,6 @@ export default function CloudDrive() {
               </div>
             )}
             
-            {/* AI Assistant Toggle Button */}
             <button 
               onClick={toggleAIAssistant}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
@@ -1021,7 +1068,7 @@ export default function CloudDrive() {
           </div>
         </div>
 
-        {/* Toolbar & Breadcrumbs (保持不变) */}
+        {/* Toolbar & Breadcrumbs */}
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-gray-600 overflow-hidden">
             {activeTab === 'all' || activeTab === 'trash' ? (
@@ -1081,7 +1128,7 @@ export default function CloudDrive() {
           </div>
         </div>
 
-        {/* Upload Progress (保持不变) */}
+        {/* Upload Progress */}
         {uploadProgress && (
           <div className="mx-6 mb-4 bg-blue-50 border border-blue-100 p-3 rounded-lg flex items-center justify-between animate-fade-in">
             <div className="flex items-center space-x-3">
@@ -1097,7 +1144,7 @@ export default function CloudDrive() {
           </div>
         )}
 
-        {/* File List (保持不变) */}
+        {/* File List */}
         <div className="flex-1 overflow-y-auto px-6 pb-6" onClick={() => setSelectedFileForAI(null)}>
           {displayFiles.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
